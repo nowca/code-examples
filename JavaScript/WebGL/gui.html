@@ -1,0 +1,873 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN" "http://www.w3.org/TR/html4/loose.dtd">
+<html lang="en">
+<head>
+<meta http-equiv="content-type" content="text/html; charset=utf-8">
+<style>
+	body {
+	  overflow: hidden;
+	  margin:   0;
+	  padding:  0;
+	}
+
+	canvas {
+	  width:  100%;
+	  height: 100%;
+	}
+</style>
+<script>//removed script</script>
+<title>Simple N-Body-Simulation</title>
+</head>
+<body>
+<canvas id="webgl-canvas"></canvas>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+	attribute vec3 a_position;
+	attribute vec3 a_color;
+
+	uniform float u_pointSize;
+	uniform mat4 u_modelMatrix;
+	uniform mat4 u_viewMatrix;
+	uniform mat4 u_projectionMatrix;
+
+	varying vec3 v_color;
+
+    void main(void) {
+    	gl_PointSize = u_pointSize;
+		gl_Position  = u_projectionMatrix * u_viewMatrix * u_modelMatrix * vec4(a_position, 1.0);
+       	v_color = a_color;
+    }
+</script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+	precision mediump float;
+
+	varying vec3 v_color;
+
+	void main(void) {
+		gl_FragColor = vec4(v_color, 1.0);/
+    }
+</script>
+
+<script>
+	(function() { 
+	    // use "secure" JavaScript -> write clean code
+	    'use strict'
+	            
+	    // execute initialize function object, after a page has been loaded
+	    window.onload = initialize;
+
+	    // polyfill, or shim, or shiv , or monkey-patch, or duck-punching, or shaking the bag
+	    window.requestAnimFrame = (function() {
+	        return window.requestAnimationFrame       ||
+	               window.webkitRequestAnimationFrame ||
+	               window.mozRequestAnimationFrame    ||
+	               window.oRequestAnimationFrame      ||
+	               window.msRequestAnimationFrame     ||
+	               function(callback, element) {
+	                    window.setTimeout(callback, 1000/60);
+	               };
+	    })();
+
+	    var config = {
+	    	isPlaying:   			true,
+	    	setPlay:  				setPlay,
+	    	speed:    				10.0,
+	    	threads:   				1,
+	    	chunk_length: 			1,
+        };
+
+        function setPlay() {
+        	config.isPlaying = !config.isPlaying;
+        	var x = document.getElementsByClassName("property-name");
+        	x[0].innerText = config.isPlaying ? "PAUSE" : "PLAY";
+        	websocket.send("00:" + (config.isPlaying ? 1 : 0));
+        };
+
+        function setMaxThreads(max_threads) {
+        	config.threads = parseInt(max_threads);
+			var gui = new dat.GUI();
+        	setupGUI(gui);
+        }
+
+        function setChunkLength(chunk_length) {
+        	config.chunk_length = chunk_length;
+        }
+
+        function setupGUI(gui) {
+            gui.folders    = [];
+            gui.parameters = {
+            	'PAUSE':        		config.setPlay,
+            	'SPEED':    			config.speed,
+				'THREADS':    			config.threads
+            };
+            gui.add(gui.parameters, 'PAUSE');
+            gui.add(gui.parameters, 'SPEED', 1, 100).step(1).onChange(function(speed) {
+                config.speed = speed;
+                websocket.send("01:" + speed);
+            });
+            gui.add(gui.parameters, 'THREADS', 1, config.threads).step(1).onChange(function(threads) {
+                config.threads = threads;
+                websocket.send("02:" + threads);
+            });
+        };
+
+
+        window.WebSocket = window.WebSocket || window.MozWebSocket;
+
+        var websocket = new WebSocket('ws://127.0.0.1:8080', 'ws-protocol');
+
+        websocket.onopen = function () {
+        };
+
+        websocket.onerror = function () {   
+        };
+
+        var dataset = [];
+        var chunk = 0;
+
+        websocket.onmessage = function (message) {
+			if (message.data.substring(0, 4) == "init") {
+				setChunkLength(message.data.substring(7, message.data.length));
+				setMaxThreads(message.data.substring(5, 6));
+			}
+
+        	var data = JSON.parse(message.data);
+        	dataset = dataset.concat(data);
+
+        	if (chunk < (config.chunk_length-1)) {
+        		chunk++;
+        	} else {
+        		Particles.setParticleData(dataset);
+        		Particles.setVertexData();
+        		dataset = [];
+        		chunk = 0;
+        	}
+        };
+
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    // Main app code starts here
+	    //
+	    // Notes:
+	    // html_ - prefix idicates DOM element object
+	    // gl_ - prefix indicates WebGL Object
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	    /// HTML canvas element
+	    var html_canvas; // note: html_ - prefix indicates DOM element object
+
+	    /// WebGL rendering context
+	    var GL;
+
+	    // Application global values
+	    var AMORTIZATION = 0.85;
+	    var drag = false;
+	    var old_x;
+	    var old_y;
+	    var dx = 0;
+	    var dy = 0;
+	    var scale = 0;
+	    var theta = 0;
+	    var phi   = 0;
+
+	    // rendering data container object
+	    var renderData = {
+	        edges: {
+	            vertices: [
+	                -1.0, 1.0, 1.0,
+	                -1.0,-1.0, 1.0,
+	                 1.0,-1.0, 1.0,
+	                 1.0, 1.0, 1.0,
+
+	                -1.0, 1.0,-1.0,
+	                 1.0, 1.0,-1.0,
+	                 1.0,-1.0,-1.0,
+	                -1.0,-1.0,-1.0
+	            ],
+	            colors: [
+	                0.3, 0.3, 0.3,
+	                0.3, 0.3, 0.3,
+	                0.3, 0.3, 0.3,
+	                0.3, 0.3, 0.3,
+	                0.3, 0.3, 0.3,
+	                0.3, 0.3, 0.3,
+	                0.3, 0.3, 0.3,
+	                0.3, 0.3, 0.3,
+	            ],
+	            indices: [
+	                0, 1, 1, 2, 2, 3, 3, 0, 0, 4, 4, 5, 5, 6, 6, 7, 7, 4, 3, 5, 2, 6, 1, 7
+	            ]
+	        },
+	        particles: {
+	            vertices: [],
+	            colors:   []
+	        }
+	    };
+
+
+	    var Particles = new function() {
+	        this.BODY_MASSES    = [];
+	        this.BODY_POSITIONS = [];
+	        this.N = 0;
+
+	        this.generateRandomData = function(p_body_count, p_type) {
+	            this.N = p_body_count;
+
+	            // center coordinates of sphere
+	            var x0 = 0.0;
+	            var y0 = 0.0;
+	            var z0 = 0.0;
+
+	            for (var i = 0; i < this.N; i++) {
+	                var u      = Math.random();
+	                var v      = Math.random();
+	                var radius = 1.0;
+	                var theta  = 2 * Math.PI * u;
+	                var phi    = Math.acos(2 * v - 1);
+
+	                var random_x    = x0 + (radius * Math.sin(phi) * Math.cos(theta));
+	                var random_y    = y0 + (radius * Math.sin(phi) * Math.sin(theta));
+	                var random_z    = z0 + (radius * Math.cos(phi));
+	                var random_body = [random_x, random_y, random_z,
+	                                   0.0, 0.0, 0.0];
+
+	                this.BODY_POSITIONS.push(random_body);
+	                this.BODY_MASSES.push(1.0);
+	            }
+	        };
+
+	        this.rx = [];
+	        this.ry = [];
+	        this.rz = [];
+	        this.vx = [];
+	        this.vy = [];
+	        this.vz = [];
+	        this.ax = [];
+	        this.ay = [];
+	        this.az = [];
+	        this.m  = [];
+
+	        this.readSourceData = function(p_BODY_MASSES, p_BODY_POSITIONS) {
+	            for (var i = 0; i < this.N; i++) {
+	                this.rx[i] = p_BODY_POSITIONS[i][0];
+	                this.ry[i] = p_BODY_POSITIONS[i][1];
+	                this.rz[i] = p_BODY_POSITIONS[i][2];
+	                this.vx[i] = p_BODY_POSITIONS[i][3];
+	                this.vy[i] = p_BODY_POSITIONS[i][4];
+	                this.vz[i] = p_BODY_POSITIONS[i][5];
+	                this.ax[i] = 0.0;
+	                this.ay[i] = 0.0;
+	                this.az[i] = 0.0;
+	                this.m[i] = p_BODY_MASSES[i];
+	            }
+	        };
+
+	        this.setParticleData = function(data) {
+	        	this.N = data.length;
+
+	        	this.BODY_MASSES    = [];
+	        	this.BODY_POSITIONS = [];
+
+	        	var position;
+
+	        	for (var i = 0; i < this.N; i++) {
+	        		var dataset = data[i];
+	        		position = [dataset[0], dataset[1], dataset[2], 0.0, 0.0, 0.0];
+	        		this.BODY_POSITIONS.push(position);
+	            	this.BODY_MASSES.push(1.0);
+	        	}
+
+	        	this.readSourceData(this.BODY_MASSES, this.BODY_POSITIONS);
+	        }
+
+	        this.setVertexData = function() {
+	            var vertices = [];
+	            var colors = [];
+
+	            for (var i = 0; i < this.N; i++) {
+	                vertices[i * 3]     = this.rx[i];
+	                vertices[i * 3 + 1] = this.ry[i];
+	                vertices[i * 3 + 2] = this.rz[i];
+	                colors[i * 3]       = 0.2;
+	                colors[i * 3 + 1]   = 0.3;
+	                colors[i * 3 + 2]   = 0.4;
+	            }
+
+	            renderData.particles.vertices = vertices;
+	            renderData.particles.colors   = colors;
+	        };
+
+	        var G   = 6.673e-11; // gravity constant: 6.673 * Math.pow(10.0,-11.0)
+	        var eps = 0.1;       // epsilon: softening factor = avoids division through zero on collision
+	        var dt  = 10.000;    // delta time = timestep
+
+	        this.computeNBody = function() {
+	            // for each particle
+	            for (var i = 0; i < this.N; i++) {
+	                if (i != j) { // ignore accelerating particle
+	                    ax[i] = 0.0; // warum auf 0 setzen ?
+	                    ay[i] = 0.0;
+	                    az[i] = 0.0;
+
+	                    // for each other particles
+	                    for (var j = 0; j < this.N; j++) {
+	                        var dx = rx[j] - rx[i];
+	                        var dy = ry[j] - ry[i];
+	                        var dz = rz[j] - rz[i];
+
+	                        var R_ij  = Math.sqrt(dx * dx + dy * dy + dz * dz + eps);
+	                        var R_ij3 = (R_ij * R_ij * R_ij);
+
+	                        var f = G * m[j] / R_ij3;
+
+	                        // set acceleration
+	                        ax[i] += f * dx;
+	                        ay[i] += f * dy;
+	                        az[i] += f * dz;
+	                    }
+
+	                    // set velocity
+	                    vx[i] += ax[i] * dt;
+	                    vy[i] += ay[i] * dt;
+	                    vz[i] += az[i] * dt;
+
+	                    // set position
+	                    rx[i] += vx[i] * dt;
+	                    ry[i] += vy[i] * dt;
+	                    rz[i] += vz[i] * dt;
+	                }
+	            }
+	        };
+	    };
+
+
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    /// @function setViewport
+	    ///
+	    /// Creates a WebGL rendering context on the Canvas Element
+	    ///
+	    /// @param {String} p_canvasId   ID of the HTML canvas element
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    function setViewport(p_canvasId) {
+
+	        // retrieve the HTML canvas element and setup the WebGL rendering context
+	        html_canvas = document.getElementById(p_canvasId); 
+	        GL = html_canvas.getContext('experimental-webgl');
+
+	        // check if WebGL rendering context is available
+	        if (!GL) {
+	            alert('There is no WebGL context available.');
+	            return;
+	        }
+
+	        // set the canvas size to window dimensions
+	        html_canvas.width  = window.innerWidth;
+	        html_canvas.height = window.innerHeight;
+
+	        // setup the WebGL viewport
+	        GL.viewport(0, 0, html_canvas.width, html_canvas.height);
+	    };
+
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    /// @function storeBufferData
+	    ///
+	    /// Creates a WebGL rendering context on the Canvas Element
+	    ///
+	    /// @param {String} p_BUFFER_TYPE  
+	    /// @param {String} p_bufferData   
+	    /// @param {String} p_DRAW_MODE  
+	    ///
+	    /// @return WebGL buffer object
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    function storeBufferData(p_BUFFER_TYPE, p_bufferData, p_DRAW_MODE) {
+
+	        // create an empty buffer object to store the data
+	         var gl_buffer = GL.createBuffer();
+
+	         // bind appropriate array buffer to it
+	         GL.bindBuffer(p_BUFFER_TYPE, gl_buffer);
+	      
+	         // pass the data to the buffer
+	         GL.bufferData(p_BUFFER_TYPE, p_bufferData, p_DRAW_MODE);
+
+	         // unbind the buffer
+	         GL.bindBuffer(p_BUFFER_TYPE, null);
+
+	         return gl_buffer;
+	    };
+
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    /// @function getShader
+	    ///
+	    /// Retrieves shader source code from html file
+	    ///
+	    /// @param {String} p_shaderId   
+	    /// @param {String} p_SHADER_TYPE  
+	    ///
+	    /// @return WebGL shader object
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    function getShader(p_shaderId, p_SHADER_TYPE) {
+
+	        // get html shader script element
+	        var html_shaderScript = document.getElementById(p_shaderId);
+
+	        // create a shader object
+	        var gl_shader = GL.createShader(p_SHADER_TYPE);
+
+	        // attach shader source code
+	        GL.shaderSource(gl_shader, html_shaderScript.text);
+
+	        // compile the shader
+	        GL.compileShader(gl_shader);
+
+	        // check whether or not the last shader compilation was successful
+	        if (!GL.getShaderParameter(gl_shader, GL.COMPILE_STATUS)) {
+	            alert("Couldn't compile the shader from source: " + p_shaderId);
+	            GL.deleteShader(gl_shader);
+	            return;
+	        }
+
+	        return gl_shader;
+	    };
+
+		////////////////////////////////////////////////////////////////////////////////////////////////////
+	    /// @function createShaderProgram
+	    ///
+	    /// Retrieves shader source code from html file
+	    ///
+	    /// @param {String} p_vertexShader   
+	    /// @param {String} p_fragmentShader  
+	    ///
+	    /// @return WebGL shader object
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    function createShaderProgram(p_vertexShader, p_fragmentShader) {
+	        // create a shader program object to store the combined shader program
+	        var gl_shaderProgram = GL.createProgram();
+
+	        // attach a vertex shader
+	        GL.attachShader(gl_shaderProgram, p_vertexShader);
+
+	        // attach a fragment shader
+	        GL.attachShader(gl_shaderProgram, p_fragmentShader);
+
+	        // link both programs
+	        GL.linkProgram(gl_shaderProgram);
+
+	        // check whether or not the last link operation was successful
+	        if (!GL.getProgramParameter(gl_shaderProgram, GL.LINK_STATUS)) {
+	            alert("Unable to initialise shaders");
+	            GL.deleteProgram(gl_shaderProgram);
+	            GL.deleteProgram(p_vertexShader);
+	            GL.deleteProgram(p_fragmentShader);
+	            return;
+	        }
+
+	        // use the combined shader program object
+	        GL.useProgram(gl_shaderProgram);
+
+	        return gl_shaderProgram;
+	    };
+
+
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    //// 
+	    /////////////////////////////////////////////////////////////////////////////////////////////////////
+	    var MatrixTransform = new function() {
+
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        /// @function radToDeg
+	        ///
+	        /// Converts Radian to Degrees
+	        ///
+	        /// @return converted degree value
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        this.radToDeg = function(radians) {
+	            return radians * 180 / Math.PI;
+	        };
+
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        /// @function degToRad
+	        ///
+	        /// Converts Degrees to Radian
+	        ///
+	        /// @return converted radian value
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        this.degToRad = function(degrees) {
+	            return degrees * Math.PI / 180;
+	        };
+
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        /// @function getIdentityMatrix
+	        ///
+	        /// Creates an identity matrix
+	        ///
+	        /// @return identity matrix array
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        this.getIdentityMatrix = function() {
+	            return [1, 0, 0, 0,
+	                    0, 1, 0, 0,
+	                    0, 0, 1, 0,
+	                    0, 0, 0, 1];
+	        };
+	        
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        /// @function multiply
+	        ///
+	        /// Multiplies two 4x4 matrices stored as 1-dimensional array
+	        ///
+	        /// Notes:
+	        /// n: row of matrix A
+	        /// m: column of matrix B 
+	        /// i: position in column of matrix A || position in row of matrix B
+	        ///
+	        /// @return product of matrix multiplication
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        this.multiply = function(p_mA, p_mB) {
+	            var result = [];
+	            var LENGTH  = 4;
+	            var tempRes = 0;
+
+	            for (var n = 0; n < LENGTH; n++) {
+	                for (var m = 0; m < LENGTH; m++) {
+	                    for (var i = 0; i < LENGTH; i++) { 
+	                        tempRes += p_mA[i + LENGTH * n] * p_mB[LENGTH * i + m];
+	                    }
+	                    result.push(tempRes);
+	                    tempRes = 0;
+	                }
+	            }
+
+	            return result;
+	        }
+
+	        this.projectionType = {
+	            PERSPECTIVE:  0,
+	            ORTHOGRAPHIC: 1
+	        };
+
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        /// @function getProjectionMatrix
+	        ///
+	        /// Creates an orthographic or a perspective matrix
+	        ///
+	        /// @param {String} p_type    
+	        /// @param {String} p_fov    
+	        /// @param {String} p_aspect    
+	        /// @param {String} p_near    
+	        /// @param {String} p_far    
+	        ///
+	        /// @return perspective matrix array
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        this.getProjectionMatrix = function(p_type, p_fov, p_aspect, p_near, p_far) {
+	            var perspectiveMatrix = [];
+	            var top    = p_near * Math.tan((Math.PI / 180) * (p_fov / 2));
+	            var bottom = -top;
+	            var right  = top * p_aspect;
+	            var left   = -right;
+
+	            if (p_type == 0) {
+	                perspectiveMatrix = [
+	                    (2 * p_near) / (right - left), 0, (right + left) / (right - left), 0,
+	                    0, (2 * p_near) / (top - bottom), (top + bottom) / top - bottom, 0,
+	                    0, 0, -((p_far + p_near) / (p_far - p_near)), -((2 * p_far * p_near) / (p_far - p_near)),
+	                    0, 0, -1, 0
+	                ];
+	            } else if (p_type == 1) {
+	                perspectiveMatrix = [
+	                    2 / (right - left), 0, 0, -((right + left) / (right-left)),
+	                    0, 2 / (top - bottom), 0, -((top + bottom) / (top - bottom)),
+	                    0, 0, -(2 / (p_far - p_near)), -((p_far + p_near) / (p_far - p_near)),
+	                    0, 0, 0, 1
+	                ];
+	            }
+
+	            return perspectiveMatrix;
+	        };
+
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        /// @function getIdentityMatrix
+	        ///
+	        /// Creates an identity matrix
+	        ///
+	        /// @return identity matrix array
+	        ////////////////////////////////////////////////////////////////////////////////////////////////////
+	        this.translate = function(p_matrix, p_tX, p_tY, p_tZ) {
+	            var tranlationMatrix = [1, 0, 0, 0,
+	                                    0, 1, 0, 0,
+	                                    0, 0, 1, 0,
+	                                    p_tX, p_tY, p_tZ, 1];
+
+	            return this.multiply(p_matrix, tranlationMatrix);
+	        };
+
+	        this.rotateX = function(p_matrix, p_angle) {
+	            var c = Math.cos(p_angle);
+	            var s = Math.sin(p_angle);
+
+	            var rotationMatrix = [
+	                1, 0, 0, 0,
+	                0, c, s, 0,
+	                0,-s, c, 0,
+	                0, 0, 0, 1
+	            ];
+
+	            return this.multiply(p_matrix, rotationMatrix);
+	        };
+
+	        this.rotateY = function(p_matrix, p_angle) {
+	            var c = Math.cos(p_angle);
+	            var s = Math.sin(p_angle);
+
+	            var rotationMatrix = [
+	                c, 0,-s, 0,
+	                0, 1, 0, 0,
+	                s, 0, c, 0,
+	                0, 0, 0, 1
+	            ];
+
+	            return this.multiply(p_matrix, rotationMatrix);
+	        };
+
+	        this.rotateZ = function(p_matrix, p_angle) {
+	            var c = Math.cos(p_angle);
+	            var s = Math.sin(p_angle);
+
+	            var rotationMatrix = [
+	                c, s, 0, 0,
+	               -s, c, 0, 0,
+	                0, 0, 1, 0,
+	                0, 0, 0, 1
+	            ];
+
+	            return this.multiply(p_matrix, rotationMatrix);
+	        };
+	        
+	        this.scale = function(p_matrix, p_sX, p_sY, p_sZ) {
+	            var rotationMatrix =  [
+	                p_sX, 0, 0, 0,
+	                0, p_sY, 0, 0,
+	                0, 0, p_sZ, 0,
+	                0, 0, 0, 1
+	            ];
+
+	            return this.multiply(p_matrix, rotationMatrix);
+	        };
+	    };
+
+
+	    /////////////////////////////////////////////////////////////////////////////////////////////////////
+	    //// event handlers
+	    /////////////////////////////////////////////////////////////////////////////////////////////////////
+	    function setEventHandlers() {
+	        var mouseDown = function(event) {
+	            drag = true;
+	            old_x = event.pageX;
+	            old_y = event.pageY;
+	            event.preventDefault();
+
+	            return false;
+	        };
+
+	        var mouseUp = function(event){
+	            drag = false;
+	        };
+
+	        var mouseMove = function(event) {
+	            if (!drag) {
+	                return false;
+	            }
+	            dx = (event.pageX - old_x) * 2 * Math.PI / html_canvas.width;
+	            dy = (event.pageY - old_y) * 2 * Math.PI / html_canvas.height;
+	            theta += dx;
+	            phi   += dy;
+	            old_x = event.pageX;
+	            old_y = event.pageY;
+	            event.preventDefault();
+	        };
+
+	        var mouseScroll = function(event) {
+	            var delta = 0;
+
+	            if (!event) event = window.event;
+
+	            if (event.wheelDelta) {
+	                delta = event.wheelDelta / 60.0; // IE and Opera
+	            } else if (event.detail) {
+	                delta = -event.detail / 2.0; // W3C
+	            }
+
+	            scale = delta / 10.0;
+	        };
+
+
+	        html_canvas.addEventListener("mousedown", mouseDown, false);
+	        html_canvas.addEventListener("mouseup",   mouseUp,   false);
+	        html_canvas.addEventListener("mouseout",  mouseUp,   false);
+	        html_canvas.addEventListener("mousemove", mouseMove, false);
+
+	        html_canvas.addEventListener("ontouchstart", mouseDown, false);
+	        html_canvas.addEventListener("ontouchend",   mouseUp,   false);
+	        html_canvas.addEventListener("ontouchmove",  mouseMove, false);
+
+	        html_canvas.addEventListener("DOMMouseScroll", mouseScroll, false);
+	    };
+
+
+
+		////////////////////////////////////////////////////////////////////////////////////////////////////
+	    /// @function clearCanvas
+	    ///
+	    /// Clears the color and depth buffers
+	    ///
+	    /// @param {Number} p_red   
+	    /// @param {Number} p_green  
+	    /// @param {Number} p_green  
+	    /// @param {Number} p_alpha  
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+		function clearCanvas(p_red, p_green, p_blue, p_alpha) {
+	        // clear the canvas
+	        GL.clearColor(p_red, p_green, p_blue, p_alpha);
+	        GL.clearDepth(1.0);
+
+	        // enable the depth test
+	        GL.enable(GL.DEPTH_TEST);
+	 
+	        // clear the color buffer bit
+	        GL.clear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT);
+	    };
+
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    /// @function associateAttributes
+	    ///
+	    /// Associates attributes to vertex shader
+	    ///
+	    /// @param {String} p_BUFFER_TYPE   
+	    /// @param {String} p_bufferObject  
+	    /// @param {String} p_variableName  
+	    ///
+	    /// @return returns location reference of the GLSL attribute
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    function associateAttributes(p_BUFFER_TYPE, p_bufferObject, p_variableName) {
+	        GL.bindBuffer(p_BUFFER_TYPE, p_bufferObject);
+
+	        var gl_locationReference = GL.getAttribLocation(GL.shader.program, p_variableName);
+
+	        GL.vertexAttribPointer(gl_locationReference, 3, GL.FLOAT, false, 0, 0) ;
+	        GL.enableVertexAttribArray(gl_locationReference);
+	        
+	        return gl_locationReference;
+	    };
+
+	    
+	 	////////////////////////////////////////////////////////////////////////////////////////////////////
+	    /// @function initialize
+	    ///
+	    /// Initializes the WebGL Application
+	    ////////////////////////////////////////////////////////////////////////////////////////////////////
+	    function initialize() {
+	    	// setup the WebGL viewport
+	        setViewport('webgl-canvas');
+
+	        // store rendering data into WebGL Buffer
+	        GL.buffer = { // note: member variables can be created dynamically (or dramatically) on GL Object
+	            edges:     {},
+	            particles: {}
+	        };
+
+	        GL.buffer.edges.vertices = storeBufferData(GL.ARRAY_BUFFER, new Float32Array(renderData.edges.vertices), GL.STATIC_DRAW);
+	        GL.buffer.edges.indices  = storeBufferData(GL.ELEMENT_ARRAY_BUFFER, new Uint16Array(renderData.edges.indices), GL.STATIC_DRAW);
+	        GL.buffer.edges.colors   = storeBufferData(GL.ARRAY_BUFFER, new Float32Array(renderData.edges.colors), GL.STATIC_DRAW);
+
+	        GL.buffer.particles.vertices = storeBufferData(GL.ARRAY_BUFFER, new Float32Array(renderData.particles.vertices), GL.DYNAMIC_DRAW);
+	        GL.buffer.particles.colors = storeBufferData(GL.ARRAY_BUFFER, new Float32Array(renderData.particles.colors), GL.DYNAMIC_DRAW);
+
+	        // store rendering data into WebGL Buffer
+	        GL.shader = {};
+	        GL.shader.vertex   = getShader("shader-vs", GL.VERTEX_SHADER);
+	        GL.shader.fragment = getShader("shader-fs", GL.FRAGMENT_SHADER);
+	        GL.shader.program  = createShaderProgram(GL.shader.vertex, GL.shader.fragment);
+		
+	        GL.locations = {};
+	        GL.locations.u_pointSize        = GL.getUniformLocation(GL.shader.program, "u_pointSize");
+			GL.locations.u_projectionMatrix = GL.getUniformLocation(GL.shader.program, "u_projectionMatrix");
+			GL.locations.u_viewMatrix       = GL.getUniformLocation(GL.shader.program, "u_viewMatrix");
+			GL.locations.u_modelMatrix      = GL.getUniformLocation(GL.shader.program, "u_modelMatrix");
+
+	        GL.uniform1f(GL.locations.u_pointSize, 5.0);
+
+			var projectionMatrix = MatrixTransform.getProjectionMatrix(MatrixTransform.projectionType.ORTHOGRAPHIC, 40, html_canvas.width / html_canvas.height, 1, 100);
+			var viewMatrix       = MatrixTransform.getIdentityMatrix();
+	        var modelMatrix      = MatrixTransform.getIdentityMatrix();
+
+	        viewMatrix = MatrixTransform.translate(viewMatrix, 0.0, 0.0, -4,0);
+	        
+
+	        var time = {
+	            now: 0.0,
+	            old: 0.0,
+	            dt: 0.0
+	        };
+
+	        var update = false;
+
+	        var animate = function(p_time) {
+	            render();
+	            window.requestAnimFrame(animate);
+	        };
+
+	        var render = function() {
+            	// re-buffer particle vertex data
+	            GL.buffer.particles.vertices = storeBufferData(GL.ARRAY_BUFFER, new Float32Array(renderData.particles.vertices), GL.DYNAMIC_DRAW);
+	            GL.buffer.particles.colors = storeBufferData(GL.ARRAY_BUFFER, new Float32Array(renderData.particles.colors), GL.STATIC_DRAW);
+
+	            // set transform parameters
+	            scale *= AMORTIZATION;
+
+	            if (!drag) {
+	               dx    *= AMORTIZATION;
+	               dy    *= AMORTIZATION;
+	               theta += dx;
+	               phi   += dy;
+	            }
+
+	            // set model matrix
+	            modelMatrix = MatrixTransform.getIdentityMatrix();
+	            modelMatrix = MatrixTransform.rotateY(modelMatrix, theta);
+	            modelMatrix = MatrixTransform.rotateX(modelMatrix, phi);
+
+	            // set view matrix
+	            if (viewMatrix[14] <= 0.0 || scale < 0.0) {
+	                viewMatrix = MatrixTransform.translate(viewMatrix, 0.0, 0.0, scale);
+	            }
+
+	            // set mvp matrix location values
+	            GL.uniformMatrix4fv(GL.locations.u_projectionMatrix, false, projectionMatrix);
+	            GL.uniformMatrix4fv(GL.locations.u_viewMatrix, false, viewMatrix);
+	            GL.uniformMatrix4fv(GL.locations.u_modelMatrix, false, modelMatrix);
+					
+	            clearCanvas(0.0, 0.0, 0.0, 1.0);
+
+	            // draw edges
+	            GL.locations.a_position = associateAttributes(GL.ARRAY_BUFFER, GL.buffer.edges.vertices, "a_position");
+	            GL.locations.a_color    = associateAttributes(GL.ARRAY_BUFFER, GL.buffer.edges.colors, "a_color");
+	            GL.bindBuffer(GL.ELEMENT_ARRAY_BUFFER, GL.buffer.edges.indices);
+	            GL.drawElements(GL.LINES, renderData.edges.indices.length, GL.UNSIGNED_SHORT, 0);
+
+	            // draw particles
+	            GL.locations.a_position = associateAttributes(GL.ARRAY_BUFFER, GL.buffer.particles.vertices, "a_position");
+	            GL.locations.a_color    = associateAttributes(GL.ARRAY_BUFFER, GL.buffer.particles.colors, "a_color");
+	            GL.drawArrays(GL.POINTS, 0, renderData.particles.vertices.length / 3);
+	        };
+
+	        GL.enable(GL.BLEND);
+	        GL.disable(GL.DEPTH_TEST);
+	        GL.blendFunc(GL.SRC_ALPHA, GL.ONE);
+
+	        setEventHandlers();
+	        animate(0);
+	    };
+	})();
+</script>
+</body>
+</html> 
+
+

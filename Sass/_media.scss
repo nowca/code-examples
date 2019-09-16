@@ -1,0 +1,31 @@
+$screen-xs-max: 767px;
+$screen-sm-min: 768px;
+$screen-sm-max: 991px;
+$screen-md-min: 992px;
+$screen-md-max: 1199px;
+$screen-lg-min: 1200px;
+
+@mixin media($styles...) {
+    @each $key, $value in $styles {
+        @if $key == lg {
+            @media only screen and (min-width: 1200px) {
+                @content;
+            }
+        }
+        @if $key == md {
+            @media only screen and (min-width: 992px) and (max-width: 1199px) {
+                @content;
+            }
+        }
+        @if $key == sm {
+            @media only screen and (min-width: 768px) and (max-width: 991px) {
+                @content;
+            }
+        }
+        @else if $key == xs {
+            @media only screen and (max-width: 767px) {
+                @content;
+            }
+        }
+    }
+}
